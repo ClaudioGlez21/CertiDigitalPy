@@ -12,16 +12,7 @@ from google.cloud import firestore
 from google.oauth2 import service_account
 import json
 
-# --- Configuración de Página y Estilo ---
 st.set_page_config(page_title="CertiDigital", layout="wide", page_icon="🎓")
-
-# --- Configuración de Firestore ---
-# **IMPORTANTE**: Para que Firestore funcione, necesitas configurar tus credenciales.
-# 1. Crea un Service Account en Google Cloud Console para tu proyecto Firestore.
-# 2. Descarga el archivo JSON de la clave del Service Account.
-# 3. Guarda este archivo JSON en el mismo directorio que tu script de Streamlit (o en una ruta segura).
-# 4. Establece una variable de entorno en Streamlit Cloud (o localmente) llamada `FIRESTORE_CREDENTIALS`
-#    con el contenido del archivo JSON como un string.
 
 FIRESTORE_COLLECTION_NAME = "diplomas_certificados"
 DB_INITIALIZED = False
@@ -35,9 +26,8 @@ try:
         credentials = service_account.Credentials.from_service_account_info(creds_dict)
         db = firestore.Client(credentials=credentials)
         DB_INITIALIZED = True
-        # st.sidebar.success("Conectado a Firestore (Secrets).")
+        st.sidebar.success("Conectado a Firestore (Secrets).")
     else:
-        # Fallback para desarrollo local (menos seguro, no para producción directa sin .gitignore)
         local_creds_path = "firestore_credentials.json" # Asegúrate que este archivo esté en .gitignore
         if os.path.exists(local_creds_path):
             db = firestore.Client.from_service_account_json(local_creds_path)
@@ -55,7 +45,7 @@ except Exception as e:
 # --- Gestión de Claves y Certificado de la Organización ---
 ORG_PRIVATE_KEY_FILE = "organizational_private_key.pem"
 ORG_CERTIFICATE_FILE = "organizational_certificate.pem"
-ORG_KEY_PASSWORD = b"micontraseñasegura parademo" # Contraseña para la clave privada
+ORG_KEY_PASSWORD_STR = st.secrets.get("org_identity", {}).get("key_password", "Password_demo")
 
 def generate_and_save_org_keys_and_cert():
     """Genera y guarda la clave privada y el certificado autofirmado de la organización si no existen."""
@@ -63,7 +53,7 @@ def generate_and_save_org_keys_and_cert():
         public_exponent=65537,
         key_size=2048
     )
-    # Guardar clave privada cifrada
+
     with open(ORG_PRIVATE_KEY_FILE, "wb") as f:
         f.write(private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
@@ -85,8 +75,8 @@ def generate_and_save_org_keys_and_cert():
         .public_key(private_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime.now(timezone.utc))
-        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=365)) # Válido por 1 año
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True) # Autofirmado como CA
+        .not_valid_after(datetime.now(timezone.utc) + datetime.timedelta(days=365)) # Válido por 1 año
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .sign(private_key, hashes.SHA256())
     )
     with open(ORG_CERTIFICATE_FILE, "wb") as f:
@@ -139,7 +129,7 @@ def verify_signature(data_hash, signature, public_key):
             hashes.SHA256()
         )
         return True
-    except Exception: # cryptography.exceptions.InvalidSignature
+    except Exception:
         return False
 
 # --- Funciones de Base de Datos (Firestore) ---
@@ -156,7 +146,7 @@ def store_certificate_details(curp, diploma_filename, diploma_hash_hex, signatur
             "diploma_filename": diploma_filename,
             "diploma_hash_hex": diploma_hash_hex,
             "signature_b64": signature_b64,
-            "certificate_pem": certificate_pem_str, # Certificado de la organización
+            "certificate_pem": certificate_pem_str, 
             "issuer_info": ORG_CERTIFICATE.subject.rfc4514_string(),
             "timestamp": timestamp,
             "firestore_doc_id": doc_ref.id # Guardamos el ID para referencia

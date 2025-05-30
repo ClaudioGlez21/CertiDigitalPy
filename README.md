@@ -148,16 +148,4 @@ Navigate to the **"Verify Certificate"** section and choose one of two options:
 
 ## 📄 License
 
-This project is distributed under the MIT License. See the [LICENSE](LICENSE) file for more details.
-
-## 👥 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## 📞 Support
-
-If you encounter any issues or have questions, please create an issue in the GitHub repository.
-
----
-
-**Made with ❤️ by [Your Name/Team Name]**
+This project is distributed under the MIT License.
