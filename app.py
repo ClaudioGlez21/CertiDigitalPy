@@ -95,7 +95,6 @@ def load_or_generate_org_identity():
             st.sidebar.warning("Intentando fallback a generación/archivos locales...")
 
 
-    # Fallback a archivos locales (útil para desarrollo local) o generación si no existen
     if os.path.exists(ORG_PRIVATE_KEY_FILE) and os.path.exists(ORG_CERTIFICATE_FILE):
         st.sidebar.info("Cargando identidad de Org desde archivos locales...")
         with open(ORG_PRIVATE_KEY_FILE, "rb") as f:
@@ -107,9 +106,6 @@ def load_or_generate_org_identity():
     else:
         st.sidebar.warning("Generando nueva identidad de Org (claves y certificado)...")
         private_key, certificate = generate_org_keys_and_cert_objects()
-        # Guardar localmente si estamos en un entorno donde esto tiene sentido (desarrollo local)
-        # En Streamlit Cloud, estos archivos podrían no persistir entre reinicios si se escriben aquí.
-        # Por eso es mejor cargar de secrets en Cloud.
         try:
             with open(ORG_PRIVATE_KEY_FILE, "wb") as f:
                 f.write(private_key.private_bytes(
@@ -127,7 +123,6 @@ def load_or_generate_org_identity():
         st.sidebar.success("Nueva identidad de Org generada.")
         return private_key, certificate
 
-# Cargar (o generar) al inicio la identidad de la organización
 ORG_PRIVATE_KEY, ORG_CERTIFICATE = load_or_generate_org_identity()
 ORG_CERTIFICATE_PEM_STR = ORG_CERTIFICATE.public_bytes(serialization.Encoding.PEM).decode('utf-8')
 
@@ -160,7 +155,7 @@ def verify_signature(data_hash, signature, public_key):
     except Exception:
         return False
 
-# --- Funciones de Base de Datos (Firestore) ---
+# --- Data base (Firestore) ---
 def store_certificate_details(curp, diploma_filename, diploma_hash_hex, signature_b64, certificate_pem_str):
     """Almacena los detalles del certificado en Firestore."""
     if not DB_INITIALIZED or db is None:
@@ -177,7 +172,7 @@ def store_certificate_details(curp, diploma_filename, diploma_hash_hex, signatur
             "certificate_pem": certificate_pem_str, 
             "issuer_info": ORG_CERTIFICATE.subject.rfc4514_string(),
             "timestamp": timestamp,
-            "firestore_doc_id": doc_ref.id # Guardamos el ID para referencia
+            "firestore_doc_id": doc_ref.id
         }
         doc_ref.set(doc_data)
         return doc_data # Devuelve los datos guardados, incluyendo el ID
@@ -317,7 +312,7 @@ if selected == "Emitir Certificado":
                                 label="📜 Descargar Certificado Emisor (.pem)",
                                 data=ORG_CERTIFICATE_PEM_STR.encode('utf-8'),
                                 file_name="certificado_organización.pem",
-                                mime="application/x-x509-ca-cert" # O application/octet-stream
+                                mime="application/x-x509-ca-cert" 
                             )
                         
                         st.markdown("---")
@@ -461,7 +456,7 @@ elif selected == "Verificar Certificado":
 elif selected == "Info del Sistema":
     st.header("ℹ️ Información del Sistema de Certificación")
     st.markdown("""
-    Esta aplicación demuestra un flujo básico para la firma digital y certificación de diplomas.
+    Esta aplicación demuestra el funcionamiento para la firma digital y certificación de certificados de matrimonio.
     Utiliza criptografía de clave pública (RSA) para generar firmas y certificados X.509.
 
     **Componentes Clave:**
