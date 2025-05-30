@@ -2,7 +2,7 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 import hashlib
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import os
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -43,30 +43,22 @@ except Exception as e:
 
 
 # --- Gestión de Claves y Certificado de la Organización ---
-ORG_PRIVATE_KEY_FILE = "organizational_private_key.pem"
-ORG_CERTIFICATE_FILE = "organizational_certificate.pem"
+ORG_PRIVATE_KEY_FILE = "organizational_private_key.pem" 
+ORG_CERTIFICATE_FILE = "organizational_certificate.pem" 
 ORG_KEY_PASSWORD_STR = st.secrets.get("org_identity", {}).get("key_password", "Password_demo")
+ORG_KEY_PASSWORD_BYTES = ORG_KEY_PASSWORD_STR.encode('utf-8')
 
-def generate_and_save_org_keys_and_cert():
-    """Genera y guarda la clave privada y el certificado autofirmado de la organización si no existen."""
+def generate_org_keys_and_cert_objects():
     private_key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=2048
     )
-
-    with open(ORG_PRIVATE_KEY_FILE, "wb") as f:
-        f.write(private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.BestAvailableEncryption(ORG_KEY_PASSWORD)
-        ))
-
     subject = issuer = x509.Name([
         x509.NameAttribute(NameOID.COUNTRY_NAME, u"MX"),
         x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"Jalisco"),
         x509.NameAttribute(NameOID.LOCALITY_NAME, u"Guadalajara"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"Organización Educativa Demo"),
-        x509.NameAttribute(NameOID.COMMON_NAME, u"certidigital.example.com"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"Organización Educativa Demo SC"), 
+        x509.NameAttribute(NameOID.COMMON_NAME, u"certidigital.streamlit.app"),
     ])
     certificate = (
         x509.CertificateBuilder()
@@ -75,32 +67,68 @@ def generate_and_save_org_keys_and_cert():
         .public_key(private_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime.now(timezone.utc))
-        .not_valid_after(datetime.now(timezone.utc) + datetime.timedelta(days=365)) # Válido por 1 año
+        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=365))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .sign(private_key, hashes.SHA256())
     )
-    with open(ORG_CERTIFICATE_FILE, "wb") as f:
-        f.write(certificate.public_bytes(serialization.Encoding.PEM))
     return private_key, certificate
 
-def load_org_keys_and_cert():
-    """Carga la clave privada y el certificado de la organización. Los genera si no existen."""
-    if not os.path.exists(ORG_PRIVATE_KEY_FILE) or not os.path.exists(ORG_CERTIFICATE_FILE):
-        st.sidebar.warning("Generando nuevas claves y certificado para la organización...")
-        private_key, certificate = generate_and_save_org_keys_and_cert()
-        st.sidebar.success("Claves y certificado generados.")
-    else:
-        with open(ORG_PRIVATE_KEY_FILE, "rb") as f:
+def load_or_generate_org_identity():
+    """Carga la identidad de la organización desde Streamlit Secrets o archivos locales (con generación como fallback)."""
+    private_key_pem_secret = st.secrets.get("org_identity", {}).get("private_key_pem")
+    certificate_pem_secret = st.secrets.get("org_identity", {}).get("certificate_pem")
+
+    if private_key_pem_secret and certificate_pem_secret:
+        try:
+            st.sidebar.info("Cargando identidad de Org desde Secrets...")
             private_key = serialization.load_pem_private_key(
-                f.read(),
-                password=ORG_KEY_PASSWORD,
+                private_key_pem_secret.encode('utf-8'),
+                password=ORG_KEY_PASSWORD_BYTES,
             )
+            certificate = x509.load_pem_x509_certificate(
+                certificate_pem_secret.encode('utf-8')
+            )
+            st.sidebar.success("Identidad de Org cargada desde Secrets.")
+            return private_key, certificate
+        except Exception as e:
+            st.sidebar.error(f"Error al cargar identidad desde Secrets: {e}. Verifique formato y contraseña.")
+            st.sidebar.warning("Intentando fallback a generación/archivos locales...")
+
+
+    # Fallback a archivos locales (útil para desarrollo local) o generación si no existen
+    if os.path.exists(ORG_PRIVATE_KEY_FILE) and os.path.exists(ORG_CERTIFICATE_FILE):
+        st.sidebar.info("Cargando identidad de Org desde archivos locales...")
+        with open(ORG_PRIVATE_KEY_FILE, "rb") as f:
+            private_key = serialization.load_pem_private_key(f.read(), password=ORG_KEY_PASSWORD_BYTES)
         with open(ORG_CERTIFICATE_FILE, "rb") as f:
             certificate = x509.load_pem_x509_certificate(f.read())
-    return private_key, certificate
+        st.sidebar.success("Identidad de Org cargada desde archivos locales.")
+        return private_key, certificate
+    else:
+        st.sidebar.warning("Generando nueva identidad de Org (claves y certificado)...")
+        private_key, certificate = generate_org_keys_and_cert_objects()
+        # Guardar localmente si estamos en un entorno donde esto tiene sentido (desarrollo local)
+        # En Streamlit Cloud, estos archivos podrían no persistir entre reinicios si se escriben aquí.
+        # Por eso es mejor cargar de secrets en Cloud.
+        try:
+            with open(ORG_PRIVATE_KEY_FILE, "wb") as f:
+                f.write(private_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.BestAvailableEncryption(ORG_KEY_PASSWORD_BYTES)
+                ))
+            with open(ORG_CERTIFICATE_FILE, "wb") as f:
+                f.write(certificate.public_bytes(serialization.Encoding.PEM))
+            st.sidebar.info(f"Nueva identidad guardada en {ORG_PRIVATE_KEY_FILE} y {ORG_CERTIFICATE_FILE}")
+            st.sidebar.caption("Para Streamlit Cloud, copie el contenido de estos archivos a los Secrets.")
+        except Exception as e_save:
+            st.sidebar.error(f"No se pudieron guardar los archivos de identidad localmente: {e_save}")
 
-# Cargar (o generar) al inicio
-ORG_PRIVATE_KEY, ORG_CERTIFICATE = load_org_keys_and_cert()
+        st.sidebar.success("Nueva identidad de Org generada.")
+        return private_key, certificate
+
+# Cargar (o generar) al inicio la identidad de la organización
+ORG_PRIVATE_KEY, ORG_CERTIFICATE = load_or_generate_org_identity()
 ORG_CERTIFICATE_PEM_STR = ORG_CERTIFICATE.public_bytes(serialization.Encoding.PEM).decode('utf-8')
 
 # --- Funciones Criptográficas ---
@@ -204,7 +232,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.image("https://placehold.co/600x100/00796b/FFFFFF?text=CertiDigital+🎓&font=raleway", use_column_width=True)
+st.image("https://placehold.co/600x100/00796b/FFFFFF?text=CertiDigital+🎓&font=raleway", use_container_width=True)
 # st.title("🎓 CertiDigital: Plataforma de Certificación")
 # st.markdown("---")
 
@@ -212,11 +240,10 @@ st.image("https://placehold.co/600x100/00796b/FFFFFF?text=CertiDigital+🎓&font
 with st.sidebar:
     st.markdown("## Navegación")
     selected = option_menu(
-        menu_title=None,  # required
+        menu_title=None,  
         options=["Emitir Certificado", "Verificar Certificado", "Info del Sistema"],
-        icons=["award", "patch-check", "info-circle"],  # optional
-        menu_icon="cast",  # optional
-        default_index=0,  # optional
+        icons=["award", "patch-check", "info-circle"], 
+        default_index=0, 
     )
     st.markdown("---")
     st.markdown(f"**Emisor del Certificado:**")
