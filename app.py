@@ -11,6 +11,8 @@ from cryptography.x509.oid import NameOID
 from google.cloud import firestore
 from google.oauth2 import service_account
 import json
+import io
+import zipfile
 
 st.set_page_config(page_title="CertiDigital", layout="wide", page_icon="🎓")
 
@@ -41,10 +43,9 @@ except Exception as e:
     st.sidebar.error(f"Error al conectar con Firestore: {str(e)[:100]}...")
     # st.sidebar.caption("Verifica la configuración de credenciales.")
 
-
 # --- Gestión de Claves y Certificado de la Organización ---
-ORG_PRIVATE_KEY_FILE = "organizational_private_key.pem" 
-ORG_CERTIFICATE_FILE = "organizational_certificate.pem" 
+ORG_PRIVATE_KEY_FILE = "organizational_private_key.pem"
+ORG_CERTIFICATE_FILE = "organizational_certificate.pem"
 ORG_KEY_PASSWORD_STR = st.secrets.get("org_identity", {}).get("key_password", "Password_demo")
 ORG_KEY_PASSWORD_BYTES = ORG_KEY_PASSWORD_STR.encode('utf-8')
 
@@ -57,7 +58,7 @@ def generate_org_keys_and_cert_objects():
         x509.NameAttribute(NameOID.COUNTRY_NAME, u"MX"),
         x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"Jalisco"),
         x509.NameAttribute(NameOID.LOCALITY_NAME, u"Guadalajara"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"Organización Educativa Demo SC"), 
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"Huskiss"),
         x509.NameAttribute(NameOID.COMMON_NAME, u"certidigital.streamlit.app"),
     ])
     certificate = (
@@ -169,7 +170,7 @@ def store_certificate_details(curp, diploma_filename, diploma_hash_hex, signatur
             "diploma_filename": diploma_filename,
             "diploma_hash_hex": diploma_hash_hex,
             "signature_b64": signature_b64,
-            "certificate_pem": certificate_pem_str, 
+            "certificate_pem": certificate_pem_str,
             "issuer_info": ORG_CERTIFICATE.subject.rfc4514_string(),
             "timestamp": timestamp,
             "firestore_doc_id": doc_ref.id
@@ -228,17 +229,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.image("https://placehold.co/600x100/00796b/FFFFFF?text=CertiDigital+🎓&font=raleway", use_container_width=True)
-# st.title("🎓 CertiDigital: Plataforma de Certificación")
-# st.markdown("---")
 
 
 with st.sidebar:
     st.markdown("## Navegación")
     selected = option_menu(
-        menu_title=None,  
+        menu_title=None,
         options=["Emitir Certificado", "Verificar Certificado", "Info del Sistema"],
-        icons=["award", "patch-check", "info-circle"], 
-        default_index=0, 
+        icons=["award", "patch-check", "info-circle"],
+        default_index=0,
     )
     st.markdown("---")
     st.markdown(f"**Emisor del Certificado:**")
@@ -299,29 +298,41 @@ if selected == "Emitir Certificado":
                     if stored_data:
                         st.success(f"✅ ¡Diploma para {curp} ({diploma_filename}) certificado con éxito!")
                         
-                        col1, col2 = st.columns(2)
-                        with col1:
+                        # --- MODIFICACIÓN AQUÍ: Generar ZIP con ambos archivos ---
+                        st.markdown("---")
+                        st.subheader("Descargar Paquete de Certificación")
+
+                        try:
+                            # Crear un buffer de bytes en memoria para el archivo zip
+                            zip_buffer = io.BytesIO()
+
+                            # Crear el archivo zip en el buffer de memoria
+                            with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                                # Añadir el archivo de firma al zip
+                                zip_file.writestr(f"{curp}_{diploma_filename}.sig", signature_bytes)
+                                # Añadir el archivo de certificado al zip
+                                zip_file.writestr("certificado_organizacion.pem", ORG_CERTIFICATE_PEM_STR.encode('utf-8'))
+
+                            # Crear el botón de descarga para el archivo zip
                             st.download_button(
-                                label="📥 Descargar Firma (.sig)",
-                                data=signature_bytes,
-                                file_name=f"{curp}_{diploma_filename}.sig",
-                                mime="application/octet-stream"
+                                label="📥 Descargar Paquete de Certificación (.zip)",
+                                data=zip_buffer.getvalue(), # Obtener los bytes del buffer del zip
+                                file_name=f"CertiDigital_{curp}.zip", # Nombre del archivo zip
+                                mime="application/zip" # Tipo MIME para archivos zip
                             )
-                        with col2:
-                             st.download_button(
-                                label="📜 Descargar Certificado Emisor (.pem)",
-                                data=ORG_CERTIFICATE_PEM_STR.encode('utf-8'),
-                                file_name="certificado_organización.pem",
-                                mime="application/x-x509-ca-cert" 
-                            )
-                        
+                            st.info("ℹ️ El archivo .zip contiene la firma digital (.sig) y el certificado del emisor (.pem). Guárdelo junto con su diploma original.")
+
+                        except Exception as e_zip:
+                            st.error(f"Error al crear el archivo .zip: {e_zip}")
+                        # --- FIN DE LA MODIFICACIÓN ---
+
                         st.markdown("---")
                         st.subheader("Detalles del Registro:")
                         st.json({
                             "CURP": stored_data["curp"],
                             "Nombre Archivo": stored_data["diploma_filename"],
                             "Hash SHA-256 (Diploma)": stored_data["diploma_hash_hex"],
-                            "Firma Digital (Base64)": stored_data["signature_b64"][:60] + "...", # Acortado para display
+                            "Firma Digital (Base64)": stored_data["signature_b64"][:60] + "...",
                             "Certificado Emisor (Fragmento)": stored_data["certificate_pem"][:100] + "...",
                             "Fecha Emisión (UTC)": stored_data["timestamp"].strftime('%Y-%m-%d %H:%M:%S'),
                             "ID Documento Firestore": stored_data["firestore_doc_id"]
@@ -499,4 +510,3 @@ elif selected == "Info del Sistema":
         st.markdown(f"**Válido Hasta (UTC):** {ORG_CERTIFICATE.not_valid_after_utc.strftime('%Y-%m-%d %H:%M:%S')}")
     except Exception as e:
         st.error(f"No se pudo cargar la información del certificado de la organización: {e}")
-
